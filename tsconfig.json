@@ -11,7 +11,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["bun"]
   },
   "include": ["src", "scripts", "demo.ts"]
 }
