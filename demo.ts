@@ -28,7 +28,7 @@ const PLAN: Array<{ caso: string; intentos: Intento[] }> = [
   { caso: "sol-003", intentos: [{ etiqueta: "única" }] },
   { caso: "sol-004", intentos: [{ etiqueta: "sin confirmar" }, { etiqueta: "confirmado: true", confirmado: true }] },
   { caso: "sol-005", intentos: [{ etiqueta: "confirmado: true", confirmado: true }] },
-  { caso: "sol-006", intentos: [{ etiqueta: "sin confirmar" }] },
+  { caso: "sol-006", intentos: [{ etiqueta: "sin confirmar" }, { etiqueta: "confirmado: true", confirmado: true }] },
 ]
 
 async function llamar<A, T>(herramienta: Herramienta<A>, args: A): Promise<Respuesta<T>> {
@@ -46,15 +46,17 @@ function imprimirValidacion(r: ResultadoValidacion): void {
   }
 }
 
-function pendientes(data: unknown): Hallazgo[] | null {
-  if (typeof data !== "object" || data === null || !("confirmaciones_pendientes" in data)) return null
-  return data.confirmaciones_pendientes as Hallazgo[]
+function hallazgosEn(data: unknown, clave: "confirmaciones_pendientes" | "bloqueos"): Hallazgo[] | null {
+  if (typeof data !== "object" || data === null || !(clave in data)) return null
+  return (data as Record<typeof clave, Hallazgo[]>)[clave]
 }
 
 function describirCrear(respuesta: Respuesta<ResultadoCrear>): string {
   if (!respuesta.ok) {
-    const lista = pendientes(respuesta.data)
-    return lista ? `pendiente de confirmación: ${codigos(lista)}` : `no creada: ${respuesta.error}`
+    const bloqueos = hallazgosEn(respuesta.data, "bloqueos")
+    if (bloqueos) return `bloqueada: ${codigos(bloqueos)}`
+    const pendientes = hallazgosEn(respuesta.data, "confirmaciones_pendientes")
+    return pendientes ? `pendiente de confirmación: ${codigos(pendientes)}` : `no creada: ${respuesta.error}`
   }
   const { numero_oc, idempotente, retroactiva } = respuesta.data
   return `OC ${numero_oc} · idempotente: ${idempotente} · retroactiva: ${retroactiva}`
@@ -96,13 +98,12 @@ async function procesar(caso: string, intentos: Intento[]): Promise<FilaResumen[
   const r = validacion.data
   imprimirValidacion(r)
   const payload = await construir(caso, paquete.data, r)
-  if (!payload.ok) {
-    console.log(`  → no se construye la OC: ${payload.error}`)
-    return [fila(caso, intentos[0]?.etiqueta ?? "-", r, `bloqueada: ${codigos(r.bloqueos)}`)]
-  }
+  // Bloqueada: no hay payload, pero igual se intenta crear para que quede la fila en control.csv (HU-5).
+  if (!payload.ok) console.log(`  → no se construye la OC: ${payload.error}`)
+  const orden = payload.ok ? { payload: payload.data.orden } : {}
   const filas: FilaResumen[] = []
   for (const intento of intentos) {
-    const args = { caso, payload: payload.data.orden, ...(intento.confirmado ? { confirmado: true } : {}) }
+    const args = { caso, ...orden, ...(intento.confirmado ? { confirmado: true } : {}) }
     const resultado = describirCrear(await llamar<typeof args, ResultadoCrear>(crear, args))
     console.log(`  → crear (${intento.etiqueta}): ${resultado}`)
     filas.push(fila(caso, intento.etiqueta, r, resultado))

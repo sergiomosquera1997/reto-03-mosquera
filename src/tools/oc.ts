@@ -173,7 +173,9 @@ export const generar_evidencia = {
 
 const argsCrear = {
   caso: casoArg,
-  payload: OrdenCompraSchema.describe("Orden de compra tal como la devolvió oc_construir_payload"),
+  payload: OrdenCompraSchema.optional().describe(
+    "Orden de compra tal como la devolvió oc_construir_payload; puede omitirse solo si la solicitud está bloqueada",
+  ),
   confirmado: z
     .boolean()
     .optional()
@@ -191,23 +193,32 @@ function fila(paquete: Paquete, r: ResultadoValidacion, resultado: FilaControl["
   }
 }
 
-async function ejecutarCrear(ctx: Ctx, caso: string, payload: OrdenCompra, confirmado: boolean): Promise<string> {
+/** HU-5: un intento bloqueado también deja fila en control.csv, se haya enviado payload o no. */
+async function rechazarBloqueada(ctx: Ctx, paquete: Paquete, r: ResultadoValidacion): Promise<string> {
+  await registrarControl(ctx, fila(paquete, r, "bloqueada", null))
+  const motivos = r.bloqueos.map((b) => `${b.regla}: ${b.detalle}`).join(" ")
+  return fallo(`La OC no se crea porque la solicitud tiene bloqueos. ${motivos}`, { bloqueos: r.bloqueos })
+}
+
+function verificarPayload(payload: OrdenCompra | undefined, orden: OrdenCompra): string | null {
+  if (!payload) return "Falta el payload: llame primero a oc_construir_payload y envíe la orden que devolvió."
+  const diferencias = diferenciasCriticas(payload, orden)
+  if (diferencias.length === 0) return null
+  return `El payload recibido no coincide con el validado; no se crea la OC. ${diferencias.join("; ")}`
+}
+
+async function ejecutarCrear(ctx: Ctx, caso: string, payload: OrdenCompra | undefined, confirmado: boolean): Promise<string> {
   const paquete = await cargarPaquete(ctx, caso)
   const { resultado: r, orden } = await preparar(ctx, caso, paquete)
-  const diferencias = orden ? diferenciasCriticas(payload, orden) : []
-  if (diferencias.length > 0) {
-    return fallo(`El payload recibido no coincide con el validado; no se crea la OC. ${diferencias.join("; ")}`)
-  }
+  if (!orden) return rechazarBloqueada(ctx, paquete, r)
+  const errorPayload = verificarPayload(payload, orden)
+  if (errorPayload) return fallo(errorPayload)
   const sap = new SapMock(ctx.directory)
   const existente = await sap.buscarOrdenPorReferencia(paquete.solicitud.solicitud_id)
   if (existente) {
     await registrarControl(ctx, fila(paquete, r, "idempotente", existente.numero_oc))
     const fecha = await sap.fechaDeOrden(existente.numero_oc)
     return ok({ numero_oc: existente.numero_oc, fecha, idempotente: true, retroactiva: r.retroactiva })
-  }
-  if (!orden) {
-    await registrarControl(ctx, fila(paquete, r, "bloqueada", null))
-    return fallo("La OC no se crea porque la solicitud tiene bloqueos.", { bloqueos: r.bloqueos })
   }
   if (r.confirmaciones.length > 0 && !confirmado) {
     await registrarControl(ctx, fila(paquete, r, "pendiente", null))
@@ -223,9 +234,9 @@ async function ejecutarCrear(ctx: Ctx, caso: string, payload: OrdenCompra, confi
 
 export const crear = {
   description:
-    "Crea la orden de compra en SAP (simulado) si no hay bloqueos y las confirmaciones fueron aceptadas; es idempotente por solicitud_id y registra cada intento en out/control.csv.",
+    "Crea la orden de compra en SAP (simulado) si no hay bloqueos y las confirmaciones fueron aceptadas; es idempotente por solicitud_id y registra cada intento, incluso bloqueado, en out/control.csv.",
   args: argsCrear,
-  async execute(args: { caso: string; payload: OrdenCompra; confirmado?: boolean }, ctx: Ctx): Promise<string> {
+  async execute(args: { caso: string; payload?: OrdenCompra; confirmado?: boolean }, ctx: Ctx): Promise<string> {
     return envolver(async () => {
       const { caso, payload, confirmado } = validarArgs(argsCrear, args)
       return ejecutarCrear(ctx, caso, payload, confirmado === true)
