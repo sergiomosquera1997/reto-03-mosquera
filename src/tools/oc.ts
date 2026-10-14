@@ -5,7 +5,7 @@ import { escribirArchivo, leerJsonOpcional, leerTextoOpcional } from "../lib/arc
 import { registrarControl, type FilaControl } from "../lib/control.ts"
 import { renderizarEvidencia } from "../lib/evidencia.ts"
 import { cargarMaestros } from "../lib/maestros.ts"
-import { parsearFecha } from "../lib/normalizar.ts"
+import { parsearFecha, quitarTildes } from "../lib/normalizar.ts"
 import { parsearCotizacion, parsearFactura } from "../lib/parsers.ts"
 import { construirOrden, diferenciasCriticas, type Trazabilidad } from "../lib/payload.ts"
 import { igualesJson } from "../lib/json.ts"
@@ -55,8 +55,19 @@ async function leerAprobacionRaw(ctx: Ctx, caso: string) {
   return leerJsonOpcional(rutaCaso(ctx, caso, "aprobacion.json"), AprobacionRawSchema)
 }
 
+/**
+ * "aprobado" como palabra completa, sin negación ("no aprobado", "no se aprueba",
+ * "no queda aprobado") y sin "rechazado" en el cuerpo.
+ */
+export function esAprobado(cuerpo: string): boolean {
+  const texto = quitarTildes(cuerpo).toLowerCase()
+  if (/\brechazad[oa]s?\b/.test(texto)) return false
+  if (/\bno\s+(?:\w+\s+){0,2}aprob\w*/.test(texto)) return false
+  return /\baprobado\b/.test(texto)
+}
+
 function normalizarAprobacion(raw: z.infer<typeof AprobacionRawSchema>): Aprobacion {
-  return { de: raw.de, fecha: raw.fecha, aprobado: /aprobado/i.test(raw.cuerpo), texto: raw.cuerpo }
+  return { de: raw.de, fecha: raw.fecha, aprobado: esAprobado(raw.cuerpo), texto: raw.cuerpo }
 }
 
 export async function cargarPaquete(ctx: Ctx, caso: string): Promise<Paquete> {

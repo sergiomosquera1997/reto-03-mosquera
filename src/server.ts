@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { z } from "zod"
 import { procesarTurno, type Dependencias } from "./agent/loop.ts"
 import { AlmacenSesiones } from "./agent/sesiones.ts"
+import { ocultarSecretos } from "./lib/secretos.ts"
 import { crearAdaptador } from "./llm/index.ts"
 
 const directory = join(import.meta.dirname, "..")
@@ -13,14 +14,9 @@ function entero(nombre: string, porDefecto: number): number {
   return Number.isInteger(valor) && valor > 0 ? valor : porDefecto
 }
 
-/** Red de seguridad: ningún texto que salga del servidor puede contener la clave. */
-function sinSecretos(texto: string): string {
-  const clave = process.env["GEMINI_API_KEY"]
-  return clave ? texto.replaceAll(clave, "***") : texto
-}
 
 function json(cuerpo: unknown, status = 200): Response {
-  return new Response(sinSecretos(JSON.stringify(cuerpo)), { status, headers: { "content-type": "application/json; charset=utf-8" } })
+  return new Response(ocultarSecretos(JSON.stringify(cuerpo)), { status, headers: { "content-type": "application/json; charset=utf-8" } })
 }
 
 async function cargarSistema(): Promise<string> {
@@ -95,6 +91,8 @@ function historial(id: string): Response {
 }
 
 const servidor = Bun.serve({
+  // 0.0.0.0 para que el contenedor (Render, Docker) acepte conexiones externas.
+  hostname: "0.0.0.0",
   port: entero("PORT", 3000),
   routes: {
     ...rutasEstaticas,
@@ -103,7 +101,7 @@ const servidor = Bun.serve({
     "/api/sessions/:id": { GET: (req) => historial(req.params.id) },
   },
   fetch: () => json({ error: "Ruta no encontrada." }, 404),
-  error: (e) => json({ error: sinSecretos(`Error interno: ${e.message}`) }, 500),
+  error: (e) => json({ error: ocultarSecretos(`Error interno: ${e.message}`) }, 500),
 })
 
 console.log(`Agente OC escuchando en http://localhost:${servidor.port} (${deps.llm.proveedor} · ${deps.llm.modelo})`)

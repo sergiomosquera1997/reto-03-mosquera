@@ -8,6 +8,7 @@ import { procesarTurno, type Dependencias } from "../src/agent/loop.ts"
 import { AlmacenSesiones } from "../src/agent/sesiones.ts"
 import { ErrorLlm, type LlmAdapter } from "../src/llm/adapter.ts"
 import { MockAdapter } from "../src/llm/mock.ts"
+import { ocultarSecretos } from "../src/lib/secretos.ts"
 import * as oc from "../src/tools/oc.ts"
 
 const directory = join(import.meta.dirname, "..")
@@ -50,6 +51,15 @@ await prueba("autorizarCreacion: la confirmación solo habilita el caso confirma
   const sinCaso: EstadoConfirmacion = { ...conCaso, ultimaDecision: { intencion: "confirmar", caso: null } }
   assert.match(autorizarCreacion(sinCaso, "sol-006", true) ?? "", /varias OC pendientes/)
   assert.equal(autorizarCreacion(sinCaso, "sol-006", false), null)
+})
+
+await prueba("aprobación: 'aprobado' como palabra completa, sin negación ni rechazo", () => {
+  for (const t of ["Aprobado", "Aprobado.\n\nMariana López", "Queda aprobado, proceder.", "APROBADO por 25 millones"]) {
+    assert.equal(oc.esAprobado(t), true, t)
+  }
+  for (const t of ["No aprobado", "No se aprueba por ahora", "No queda aprobado hasta revisar", "Rechazado", "Rechazado, no está aprobado", "Aprobado no; rechazado", "Desaprobado", "Aprobados los otros", "Pendiente de revisión"]) {
+    assert.equal(oc.esAprobado(t), false, t)
+  }
 })
 
 const sesion = new AlmacenSesiones().obtener("sol-004")
@@ -137,6 +147,14 @@ await prueba("herramientas: paquete y derivados opcionales; un paquete alterado 
   const construido = await llamar(oc.construir_payload, { caso: "sol-006", derivados: { indicador_iva: { valor: "C0", fuente: "x" }, hallazgos: [] } })
   assert.equal(((construido.data["orden"] as { posiciones: Array<{ indicador_iva: string }> }).posiciones[0])?.indicador_iva, "C1")
   assert.match(construido.data.advertencias?.[0] ?? "", /derivados enviados no coinciden/)
+})
+
+await prueba("ocultarSecretos tapa las claves de Anthropic y Gemini", () => {
+  const env = { ANTHROPIC_API_KEY: "sk-ant-prueba-123456", GEMINI_API_KEY: "AIzaPrueba987654", OTRA: "no-secreta-1234" }
+  const texto = 'Error: {"key":"sk-ant-prueba-123456"} y AIzaPrueba987654 otra vez sk-ant-prueba-123456; no-secreta-1234'
+  assert.equal(ocultarSecretos(texto, env), 'Error: {"key":"***"} y *** otra vez ***; no-secreta-1234')
+  assert.equal(ocultarSecretos("sin claves", {}), "sin claves")
+  assert.equal(ocultarSecretos("abc corto", { ANTHROPIC_API_KEY: "abc" }), "abc corto")
 })
 
 await prueba("caso bloqueado: registra el intento sin payload", async () => {
