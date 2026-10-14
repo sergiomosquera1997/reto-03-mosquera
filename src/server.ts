@@ -31,6 +31,30 @@ async function cargarSistema(): Promise<string> {
   return `${prompt}\n\n---\n\n# Conocimiento del proceso\n\n${conocimiento}`
 }
 
+// ── Front estático (web/), sin build ────────────────────────────────────────
+const ESTATICOS: Record<string, { archivo: string; tipo: string }> = {
+  "/": { archivo: "index.html", tipo: "text/html; charset=utf-8" },
+  "/app.js": { archivo: "app.js", tipo: "text/javascript; charset=utf-8" },
+  "/markdown.js": { archivo: "markdown.js", tipo: "text/javascript; charset=utf-8" },
+  "/styles.css": { archivo: "styles.css", tipo: "text/css; charset=utf-8" },
+}
+
+const CABECERAS_SEGURIDAD = {
+  "content-security-policy":
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+}
+
+function estatico(ruta: string): Response {
+  const { archivo, tipo } = ESTATICOS[ruta] ?? { archivo: "index.html", tipo: "text/html; charset=utf-8" }
+  return new Response(Bun.file(join(directory, "web", archivo)), {
+    headers: { "content-type": tipo, "cache-control": "no-cache", ...CABECERAS_SEGURIDAD },
+  })
+}
+
+const rutasEstaticas = Object.fromEntries(Object.keys(ESTATICOS).map((ruta) => [ruta, { GET: () => estatico(ruta) }]))
+
 const ChatSchema = z
   .object({
     sessionId: z.string().regex(/^[\w-]{1,100}$/, "sessionId: solo letras, dígitos, _ y -, máx. 100"),
@@ -73,6 +97,7 @@ function historial(id: string): Response {
 const servidor = Bun.serve({
   port: entero("PORT", 3000),
   routes: {
+    ...rutasEstaticas,
     "/api/health": { GET: () => json({ ok: true, provider: deps.llm.proveedor, model: deps.llm.modelo }) },
     "/api/chat": { POST: chat },
     "/api/sessions/:id": { GET: (req) => historial(req.params.id) },

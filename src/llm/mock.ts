@@ -165,8 +165,9 @@ export class MockAdapter implements LlmAdapter {
   private trasCrear(caso: string, e: Evento): string {
     if (e.ok) {
       const retro = campo(e.data, "retroactiva") === true ? " Quedó marcada como retroactiva." : ""
-      const idem = campo(e.data, "idempotente") === true ? " (ya existía)" : ""
-      return `OC ${String(campo(e.data, "numero_oc"))} creada para ${caso}${idem}.${retro}`
+      const numero = String(campo(e.data, "numero_oc"))
+      if (campo(e.data, "idempotente") === true) return `La OC de ${caso} ya existía: ${numero}. No se creó otra.${retro}`
+      return `OC ${numero} creada para ${caso}.${retro}`
     }
     const bloqueos = reglas(campo(e.data, "bloqueos"))
     if (bloqueos.length > 0) return `No se puede crear la OC de ${caso}:\n${bloqueos.map((b) => `- ${b}`).join("\n")}`

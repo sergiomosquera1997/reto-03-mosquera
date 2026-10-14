@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agente OC SAP</title>
+    <meta name="description" content="Agente conversacional que prepara y crea órdenes de compra en SAP." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232456d6'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="barra">
+      <div class="marca">
+        <span class="logo" aria-hidden="true"></span>
+        <div>
+          <h1>Órdenes de Compra SAP</h1>
+          <p class="subtitulo">Asistente de la analista administrativa</p>
+        </div>
+      </div>
+      <div class="acciones">
+        <span id="estado-modelo" class="insignia" title="Proveedor y modelo del agente">conectando…</span>
+        <button id="nueva-sesion" class="boton secundario" type="button">Nueva sesión</button>
+      </div>
+    </header>
+
+    <main id="chat" class="chat" aria-live="polite" aria-label="Conversación con el agente">
+      <section id="bienvenida" class="bienvenida">
+        <h2>¿Qué solicitud procesamos?</h2>
+        <p>El agente lee el paquete, lo valida contra los maestros (RC1–RC10), arma la OC y solo la crea cuando la confirmas.</p>
+        <div class="sugerencias">
+          <button type="button" class="chip" data-mensaje="Procesa la solicitud sol-001">Procesa sol-001</button>
+          <button type="button" class="chip" data-mensaje='Procesa la solicitud "sol-004". Muéstrame la OC como quedaría en SAP, qué validaciones pasó y cuáles no, y no la crees hasta que yo lo confirme.'>sol-004, sin crear hasta confirmar</button>
+          <button type="button" class="chip" data-mensaje="Procesa la solicitud sol-002">Procesa sol-002</button>
+          <button type="button" class="chip" data-mensaje="Procesa la solicitud sol-005">Procesa sol-005</button>
+        </div>
+      </section>
+      <ol id="mensajes" class="mensajes"></ol>
+      <div id="pensando" class="pensando" hidden>
+        <span class="puntos" aria-hidden="true"><i></i><i></i><i></i></span>
+        Pensando…
+      </div>
+    </main>
+
+    <footer class="pie">
+      <section id="confirmacion" class="confirmacion" hidden aria-live="assertive" aria-label="Confirmaciones pendientes"></section>
+      <form id="entrada" class="entrada" autocomplete="off">
+        <label for="mensaje" class="oculto">Mensaje para el agente</label>
+        <textarea id="mensaje" rows="1" placeholder="Ej.: procesa la solicitud sol-004" required></textarea>
+        <button id="enviar" class="boton primario" type="submit">Enviar</button>
+      </form>
+    </footer>
+  </body>
+</html>
