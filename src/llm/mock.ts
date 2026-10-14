@@ -129,9 +129,9 @@ export class MockAdapter implements LlmAdapter {
     if (!previo.ok && previo.nombre !== "oc_crear") return texto(`No pude completar ${previo.nombre} para ${caso}: ${previo.error}`)
     switch (previo.nombre) {
       case "oc_leer_paquete":
-        return herramientas(llamada("oc_validar", { caso, paquete: previo.data }))
+        return herramientas(llamada("oc_validar", { caso }))
       case "oc_validar":
-        return this.trasValidar(caso, previo, lista)
+        return this.trasValidar(caso, previo)
       case "oc_construir_payload":
       case "oc_generar_evidencia":
         return this.trasConstruir(caso, lista, delTurno)
@@ -142,11 +142,10 @@ export class MockAdapter implements LlmAdapter {
     }
   }
 
-  private trasValidar(caso: string, validacion: Evento, lista: Evento[]): RespuestaLlm {
+  private trasValidar(caso: string, validacion: Evento): RespuestaLlm {
     if (campo(validacion.data, "apta") !== true) return herramientas(llamada("oc_crear", { caso }))
-    const paquete = ultimo(lista, "oc_leer_paquete", caso)?.data
     return herramientas(
-      llamada("oc_construir_payload", { caso, paquete, derivados: campo(validacion.data, "derivados") }),
+      llamada("oc_construir_payload", { caso }),
       llamada("oc_generar_evidencia", { caso }),
     )
   }

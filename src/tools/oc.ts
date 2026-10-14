@@ -8,9 +8,10 @@ import { cargarMaestros } from "../lib/maestros.ts"
 import { parsearFecha } from "../lib/normalizar.ts"
 import { parsearCotizacion, parsearFactura } from "../lib/parsers.ts"
 import { construirOrden, diferenciasCriticas, type Trazabilidad } from "../lib/payload.ts"
+import { igualesJson } from "../lib/json.ts"
 import { evaluarReglas } from "../lib/reglas.ts"
 import { ErrorNegocio, envolver, fallo, ok } from "../lib/resultado.ts"
-import { relativa, rutaCaso, rutaOut } from "../lib/rutas.ts"
+import { relativa, rutaCaso, rutaOut, validarCaso } from "../lib/rutas.ts"
 import { SapMock } from "../sap/mock.ts"
 import {
   AprobacionRawSchema,
@@ -28,7 +29,9 @@ import {
 } from "../schemas.ts"
 
 const casoArg = z.string().describe('Nombre de la carpeta del caso en fixtures/reto-03/solicitudes/ (ej. "sol-001")')
-const paqueteArg = PaqueteSchema.describe("Paquete normalizado tal como lo devolvió oc_leer_paquete")
+const paqueteArg = PaqueteSchema.optional().describe(
+  "Opcional; no hace falta enviarlo: la herramienta usa el paquete que oc_leer_paquete guardó para el caso",
+)
 
 /** Valida los argumentos aunque la herramienta se llame sin el backend (demo.ts). */
 function validarArgs<S extends z.ZodRawShape>(args: S, valor: unknown): z.infer<z.ZodObject<S>> {
@@ -79,6 +82,36 @@ export async function cargarPaquete(ctx: Ctx, caso: string): Promise<Paquete> {
   }
 }
 
+// ── Paquete persistido por caso ──────────────────────────────────────────────
+// Los valores nunca salen del modelo: validar y construir leen el paquete de
+// out/<caso>/paquete.json (o lo recalculan desde los fixtures). Si el modelo envía
+// uno distinto, se ignora y se devuelve una advertencia.
+
+async function guardarPaquete(ctx: Ctx, caso: string, paquete: Paquete): Promise<void> {
+  await escribirArchivo(rutaOut(ctx, caso, "paquete.json"), JSON.stringify(paquete, null, 2))
+}
+
+async function paqueteDelCaso(ctx: Ctx, caso: string): Promise<Paquete> {
+  const guardado = await leerJsonOpcional(rutaOut(ctx, validarCaso(caso), "paquete.json"), PaqueteSchema)
+  if (guardado) return guardado
+  const paquete = await cargarPaquete(ctx, caso)
+  await guardarPaquete(ctx, caso, paquete)
+  return paquete
+}
+
+async function resolverPaquete(ctx: Ctx, caso: string, recibido?: Paquete): Promise<{ paquete: Paquete; advertencias: string[] }> {
+  const paquete = await paqueteDelCaso(ctx, caso)
+  const advertencias =
+    recibido && !igualesJson(recibido, paquete)
+      ? [`El paquete enviado no coincide con el del caso; se usó el guardado en out/${caso}/paquete.json.`]
+      : []
+  return { paquete, advertencias }
+}
+
+function conAdvertencias<T extends object>(data: T, advertencias: string[]): T & { advertencias?: string[] } {
+  return advertencias.length > 0 ? { ...data, advertencias } : data
+}
+
 // ── Preparación compartida (validar → evidencia → payload) ───────────────────
 
 async function calcularEvidencia(ctx: Ctx, caso: string) {
@@ -115,7 +148,9 @@ export const leer_paquete = {
   async execute(args: { caso: string }, ctx: Ctx): Promise<string> {
     return envolver(async () => {
       const { caso } = validarArgs(argsLeer, args)
-      return ok(await cargarPaquete(ctx, caso))
+      const paquete = await cargarPaquete(ctx, caso)
+      await guardarPaquete(ctx, caso, paquete)
+      return ok(paquete)
     })
   },
 }
@@ -125,10 +160,11 @@ export const validar = {
   description:
     "Aplica las reglas de control RC1–RC10 al paquete y devuelve si es apta, los bloqueos, las confirmaciones, los valores derivados y si es retroactiva.",
   args: argsValidar,
-  async execute(args: { caso: string; paquete: Paquete }, ctx: Ctx): Promise<string> {
+  async execute(args: { caso: string; paquete?: Paquete }, ctx: Ctx): Promise<string> {
     return envolver(async () => {
-      const { paquete } = validarArgs(argsValidar, args)
-      return ok(evaluarReglas(paquete, await cargarMaestros(ctx)))
+      const { caso, paquete: recibido } = validarArgs(argsValidar, args)
+      const { paquete, advertencias } = await resolverPaquete(ctx, caso, recibido)
+      return ok(conAdvertencias(evaluarReglas(paquete, await cargarMaestros(ctx)), advertencias))
     })
   },
 }
@@ -136,22 +172,23 @@ export const validar = {
 const argsConstruir = {
   caso: casoArg,
   paquete: paqueteArg,
-  derivados: DerivadosSchema.describe("Objeto `derivados` tal como lo devolvió oc_validar"),
+  derivados: DerivadosSchema.optional().describe("Opcional; no hace falta enviarlo: se recalculan desde los maestros"),
 }
 export const construir_payload = {
   description:
     "Construye la orden de compra exactamente como quedaría en SAP y guarda la trazabilidad de cada campo en out/<caso>/trazabilidad.json.",
   args: argsConstruir,
-  async execute(args: { caso: string; paquete: Paquete; derivados: Derivados }, ctx: Ctx): Promise<string> {
+  async execute(args: { caso: string; paquete?: Paquete; derivados?: Derivados }, ctx: Ctx): Promise<string> {
     return envolver(async () => {
-      const { caso, paquete, derivados } = validarArgs(argsConstruir, args)
+      const { caso, paquete: recibido, derivados } = validarArgs(argsConstruir, args)
+      const { paquete, advertencias } = await resolverPaquete(ctx, caso, recibido)
       const { resultado, orden, trazabilidad } = await preparar(ctx, caso, paquete)
       if (!orden || !trazabilidad) return fallo("La solicitud tiene bloqueos; no se construye la OC.", { bloqueos: resultado.bloqueos })
-      const diferencias = compararDerivados(derivados, resultado.derivados)
-      if (diferencias.length > 0) return fallo(`Los derivados recibidos no coinciden con los maestros: ${diferencias.join("; ")}`)
+      const diferencias = derivados ? compararDerivados(derivados, resultado.derivados) : []
+      if (diferencias.length > 0) advertencias.push(`Los derivados enviados no coinciden con los maestros; se usaron los calculados (${diferencias.join("; ")}).`)
       const ruta = rutaOut(ctx, caso, "trazabilidad.json")
       await escribirArchivo(ruta, JSON.stringify(trazabilidad, null, 2))
-      return ok({ orden, ruta_trazabilidad: relativa(ctx, ruta) })
+      return ok(conAdvertencias({ orden, ruta_trazabilidad: relativa(ctx, ruta) }, advertencias))
     })
   },
 }

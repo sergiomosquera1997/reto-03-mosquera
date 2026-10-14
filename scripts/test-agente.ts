@@ -8,6 +8,7 @@ import { procesarTurno, type Dependencias } from "../src/agent/loop.ts"
 import { AlmacenSesiones } from "../src/agent/sesiones.ts"
 import { ErrorLlm, type LlmAdapter } from "../src/llm/adapter.ts"
 import { MockAdapter } from "../src/llm/mock.ts"
+import * as oc from "../src/tools/oc.ts"
 
 const directory = join(import.meta.dirname, "..")
 const base: Dependencias = { llm: new MockAdapter("mock-temerario", { temerario: true }), directory, sistema: "prueba", maxIter: 25, maxTokensSesion: 1_000_000 }
@@ -117,6 +118,25 @@ await prueba("botón Confirmar de un caso sin pendiente: el servidor lo indica s
   assert.deepEqual(r.toolCalls, [])
   assert.match(r.reply, /No hay una OC pendiente de confirmación para sol-004/)
   assert.deepEqual([...s.pendientes.keys()], ["sol-006"])
+})
+
+await prueba("herramientas: paquete y derivados opcionales; un paquete alterado se ignora con advertencia", async () => {
+  const ctx = { directory, sessionId: "t" }
+  type R = { ok: boolean; data: Record<string, unknown> & { advertencias?: string[] } }
+  const llamar = async (h: { execute(a: never, c: typeof ctx): Promise<string> }, args: object) => JSON.parse(await h.execute(args as never, ctx)) as R
+  const leido = await llamar(oc.leer_paquete, { caso: "sol-004" })
+  assert.equal(leido.ok, true)
+  const soloCaso = await llamar(oc.validar, { caso: "sol-004" })
+  assert.deepEqual((soloCaso.data["confirmaciones"] as Array<{ regla: string }>).map((c) => c.regla), ["RC5"])
+  assert.equal(soloCaso.data.advertencias, undefined)
+  const alterado = structuredClone(leido.data) as { solicitud: { valor_total: number } }
+  alterado.solicitud.valor_total = 26_500_000
+  const conAlterado = await llamar(oc.validar, { caso: "sol-004", paquete: alterado })
+  assert.deepEqual((conAlterado.data["confirmaciones"] as Array<{ regla: string }>).map((c) => c.regla), ["RC5"])
+  assert.match(conAlterado.data.advertencias?.[0] ?? "", /no coincide con el del caso/)
+  const construido = await llamar(oc.construir_payload, { caso: "sol-006", derivados: { indicador_iva: { valor: "C0", fuente: "x" }, hallazgos: [] } })
+  assert.equal(((construido.data["orden"] as { posiciones: Array<{ indicador_iva: string }> }).posiciones[0])?.indicador_iva, "C1")
+  assert.match(construido.data.advertencias?.[0] ?? "", /derivados enviados no coinciden/)
 })
 
 await prueba("caso bloqueado: registra el intento sin payload", async () => {

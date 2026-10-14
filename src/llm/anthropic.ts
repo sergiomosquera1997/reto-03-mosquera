@@ -4,8 +4,8 @@ import Anthropic from "@anthropic-ai/sdk"
 import { ErrorLlm, type DefinicionHerramienta, type LlmAdapter, type Mensaje, type RespuestaLlm } from "./adapter.ts"
 import { esquemaJson } from "./esquema.ts"
 
-type Bloque = Anthropic.Beta.BetaContentBlock
-type MensajeApi = Anthropic.Beta.BetaMessageParam
+type Bloque = Anthropic.ContentBlock
+type MensajeApi = Anthropic.MessageParam
 
 const TIMEOUT_MS = 60_000
 const MAX_TOKENS = 16_000
@@ -37,14 +37,14 @@ function aMensaje(m: Exclude<Mensaje, { rol: "sistema" }>): MensajeApi {
   // El turno original se reenvía intacto: incluye bloques de pensamiento y de fallback,
   // que deben volver sin cambios (historial solo de anexado).
   if (m.nativo) return { role: "assistant", content: m.nativo as Bloque[] }
-  const content: Anthropic.Beta.BetaContentBlockParam[] = [
+  const content: Anthropic.ContentBlockParam[] = [
     ...(m.texto ? [{ type: "text" as const, text: m.texto }] : []),
     ...m.llamadas.map((l) => ({ type: "tool_use" as const, id: l.id, name: l.nombre, input: l.args })),
   ]
   return { role: "assistant", content: content.length > 0 ? content : "(sin respuesta)" }
 }
 
-function leerRespuesta(r: Anthropic.Beta.BetaMessage): RespuestaLlm {
+function leerRespuesta(r: Anthropic.Message): RespuestaLlm {
   if (r.stop_reason === "refusal") {
     const categoria = r.stop_details?.category ?? "sin categoría"
     throw new ErrorLlm(`El modelo declinó la solicitud (categoría: ${categoria}). Reformúlala o procesa el caso manualmente.`)
@@ -96,27 +96,25 @@ export class AnthropicAdapter implements LlmAdapter {
     }
   }
 
-  private crear(mensajes: Mensaje[], herramientas: DefinicionHerramienta[]): Promise<Anthropic.Beta.BetaMessage> {
+  private crear(mensajes: Mensaje[], herramientas: DefinicionHerramienta[]): Promise<Anthropic.Message> {
     const sistema = mensajes.flatMap((m) => (m.rol === "sistema" ? [m.texto] : [])).join("\n\n")
     const tools = herramientas.map((h) => ({
       name: h.nombre,
       description: h.descripcion,
-      input_schema: esquemaJson(h.esquema) as Anthropic.Beta.BetaTool.InputSchema,
+      input_schema: esquemaJson(h.esquema) as Anthropic.Tool.InputSchema,
     }))
-    return this.cliente.beta.messages.create({
+    return this.cliente.messages.create({
       model: this.modelo,
       max_tokens: MAX_TOKENS,
-      ...(sistema ? { system: [{ type: "text" as const, text: sistema }] } : {}),
+      // Caché fija: el prefijo herramientas + sistema es idéntico en todas las sesiones,
+      // así que la primera llamada de una sesión nueva lo lee de caché en vez de reescribirlo.
+      ...(sistema ? { system: [{ type: "text" as const, text: sistema, cache_control: { type: "ephemeral" as const } }] } : {}),
       messages: mensajes.flatMap((m) => (m.rol === "sistema" ? [] : [aMensaje(m)])),
       ...(tools.length > 0 ? { tools } : {}),
-      // Caché automática del prefijo (herramientas + sistema + historial): cada iteración
-      // reenvía la conversación completa, así que las lecturas de caché abaratan el turno.
+      // Caché móvil del historial: cada iteración reenvía la conversación completa.
       cache_control: { type: "ephemeral" },
       // Flujo de varias herramientas: "medium" equilibra calidad y tokens en Sonnet 5.5.
       output_config: { effort: "medium" },
-      // Si el modelo declina por un clasificador de seguridad, el API reintenta en el modelo recomendado.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
     })
   }
 
