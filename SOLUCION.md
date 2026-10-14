@@ -149,6 +149,17 @@ La decisión de tolerar o rechazar es de la dirección; el agente ya entrega el 
 | **Front HTML plano servido por Bun**, sin build | React/Vite | Un solo comando y un solo proceso; con CSP estricta. |
 | **Evidencia en `.txt` con sha256** | PDF (P1) | El P0 es txt. El hash se calcula sobre el contenido y se usa en el payload. |
 
+### Dependencias
+
+| Paquete | Por qué |
+|---|---|
+| `zod` | Obligatorio por el PRD: esquemas de argumentos de herramientas, del paquete, de los maestros y de la OC (7.4). También valida el cuerpo de `/api/chat`. |
+| `@anthropic-ai/sdk` | SDK oficial para el proveedor en uso (`claude-sonnet-5-5`): tipos de mensajes y herramientas, errores tipados (429, 529, timeout) y caché de prompt. |
+| `@google/genai` | SDK oficial de Gemini, el primer proveedor. Se mantiene como alternativa (`LLM_PROVIDER=gemini`) para demostrar que el adaptador es intercambiable. |
+| `zod-to-json-schema` | Convierte los esquemas zod (v3) al JSON Schema que pide cada proveedor: draft-07 para Anthropic, OpenAPI 3 limpio para Gemini. Así hay una sola fuente de verdad para los argumentos. |
+
+Solo de desarrollo: `typescript` y `@types/bun`/`@types/node` (para `bun run typecheck`). El servidor HTTP, `fs` y `crypto` vienen de Bun/Node, sin dependencias extra.
+
 ## 9. Supuestos
 
 1. **Valor de la OC:** el de la solicitud, no el de la cotización. La diferencia se confirma (RC5), no se corrige.
@@ -175,10 +186,10 @@ La decisión de tolerar o rechazar es de la dirección; el agente ya entrega el 
 | HU-6 Manejo de errores | Hecho | Alertas y monitoreo. |
 | Front, API, CA1–CA5 | Hecho | Autenticación de usuarios, sesiones persistentes. |
 | `demo.ts` sin modelo | Hecho | — |
-| Despliegue público | **Pendiente** | Ver README. |
+| Despliegue público | Hecho: https://reto-03-mosquera-samm.onrender.com (Render, Docker) | Plan pago o *keep-alive* para evitar la espera de ~50 s al despertar; volumen persistente para `out/`. |
 | Bonus `modulo/` | No hecho | — |
 
-Verificación: `bun run demo.ts` (6 casos, idempotencia, confirmación), `bun run test` (13 escenarios: agente con el mock y detección de la aprobación) y `bun run typecheck`.
+Verificación: `bun run demo.ts` (6 casos, idempotencia, confirmación), `bun run test` (14 escenarios: agente con el mock, detección de la aprobación y ocultamiento de claves) y `bun run typecheck`.
 
 ## 11. Uso de IA
 
@@ -205,7 +216,8 @@ Cada línea entregada fue revisada y puedo explicarla.
 | El modelo altera un monto o crea sin permiso | Los valores salen de las herramientas, `oc_crear` reconstruye y compara el payload, y CA3 está en el servidor. |
 | Aprobación en texto libre mal interpretada | **Corregido:** la detección ingenua (`/aprobado/i`) aceptaba "No aprobado". Ahora exige la palabra completa, rechaza negaciones y "rechazado", con pruebas en `scripts/test-agente.ts`. Queda el riesgo de redacciones no previstas ("aprobado con reparos"); en producción, un flujo de aprobación formal (botón o firma) en lugar de texto libre. |
 | Maestros desactualizados (fixtures estáticos) | Consultar proveedor y aprobadores en SAP en línea (`consultarProveedor`). |
-| Clave de API expuesta | La clave solo vive en variables del backend y los errores se filtran antes de responder. El filtro `sinSecretos` de `server.ts` hoy cubre `GEMINI_API_KEY`; hay que extenderlo a `ANTHROPIC_API_KEY`. |
+| Clave de API expuesta | La clave solo vive en variables del backend. Toda respuesta del servidor pasa por `ocultarSecretos` (`src/lib/secretos.ts`), que reemplaza `ANTHROPIC_API_KEY` y `GEMINI_API_KEY` por `***`; tiene prueba en `scripts/test-agente.ts`. |
+| Gasto sin tope global (link público) | `MAX_TOKENS_SESION` limita cada sesión, pero cualquiera puede abrir sesiones nuevas. Mitigación actual: **límite de gasto mensual en la consola de Anthropic**, que corta el consumo al alcanzarlo. En producción: tope diario de tokens en el servidor, límite por IP y autenticación. |
 | Gasto descontrolado | `MAX_ITER`, `MAX_TOKENS_SESION`, una sesión ocupada no acepta mensajes concurrentes (409). Falta: límite por IP o usuario y autenticación del link. |
 | Sesiones en memoria y un solo proceso | Persistir sesiones (Redis o archivo) para escalar horizontalmente. |
 | Disponibilidad del proveedor LLM | Reintentos con *backoff* y timeout de 60 s; adaptador intercambiable (Gemini como respaldo). |

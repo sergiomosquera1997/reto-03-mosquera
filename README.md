@@ -4,7 +4,9 @@ Agente conversacional que lee el paquete de una compra, lo valida contra los mae
 
 ## Link de prueba
 
-**Pendiente de despliegue.** El link es público, sin clave de acceso.
+**https://reto-03-mosquera-samm.onrender.com**. El link es público, sin clave de acceso.
+
+> Está en el plan gratis de Render: si estuvo inactivo, la primera carga puede tardar ~50 s mientras el servicio despierta.
 
 ## Requisitos
 
