@@ -6,6 +6,8 @@ import {
   actualizarPendientes,
   autorizarCreacion,
   clasificarMensaje,
+  resolverAtajo,
+  type ConfirmacionBoton,
   type EventoHerramienta,
   type Pendiente,
 } from "./confirmacion.ts"
@@ -21,7 +23,7 @@ export type Dependencias = {
   maxTokensSesion: number
 }
 
-export type Entrada = { message?: string; confirm?: boolean }
+export type Entrada = { message?: string; confirm?: ConfirmacionBoton }
 
 export type RespuestaTurno = {
   reply: string
@@ -33,8 +35,6 @@ export type RespuestaTurno = {
 type Respuesta = { ok: boolean; error?: string; data?: unknown }
 
 type Turno = { toolCalls: ToolCallVisible[]; eventos: EventoHerramienta[] }
-
-const TEXTO_POR_DEFECTO = { confirmar: "Confirmo.", cancelar: "Cancelar." } as const
 
 // ── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -185,17 +185,16 @@ function mensajeDeFallo(e: unknown): string {
   return `Ocurrió un error inesperado procesando el turno: ${e instanceof Error ? e.message : "sin detalle"}`
 }
 
-function cancelar(sesion: Sesion): string {
-  const casos = [...sesion.pendientes.keys()]
-  sesion.pendientes.clear()
-  return `Cancelado. No se creó la OC de ${casos.join(", ")}; se descartaron sus confirmaciones pendientes. Si quieres retomarla, pídeme procesarla de nuevo.`
+/** Texto que representa al botón en la conversación, para que el modelo sepa qué caso se decidió. */
+function textoDeBoton(boton: ConfirmacionBoton | undefined): string {
+  if (!boton) return ""
+  return boton.valor ? `Confirmo ${boton.caso}.` : `Cancelo ${boton.caso}.`
 }
 
 function registrarEntrada(sesion: Sesion, entrada: Entrada): string {
-  const intencion = clasificarMensaje(entrada.message ?? "", entrada.confirm)
-  const texto = entrada.message?.trim() || (intencion === "otro" ? "" : TEXTO_POR_DEFECTO[intencion])
+  const texto = entrada.message?.trim() || textoDeBoton(entrada.confirm)
   sesion.mensajesUsuario += 1
-  sesion.ultimaIntencion = intencion
+  sesion.ultimaDecision = clasificarMensaje(texto, entrada.confirm)
   sesion.mensajes.push({ rol: "usuario", texto })
   sesion.historial.push({ rol: "usuario", texto, ts: new Date().toISOString() })
   return texto
@@ -214,7 +213,8 @@ function cerrarTurno(sesion: Sesion, reply: string, turno: Turno): RespuestaTurn
 export async function procesarTurno(sesion: Sesion, entrada: Entrada, deps: Dependencias): Promise<RespuestaTurno> {
   registrarEntrada(sesion, entrada)
   const turno: Turno = { toolCalls: [], eventos: [] }
-  if (sesion.ultimaIntencion === "cancelar" && sesion.pendientes.size > 0) return cerrarTurno(sesion, cancelar(sesion), turno)
+  const atajo = resolverAtajo(sesion)
+  if (atajo) return cerrarTurno(sesion, atajo.reply, turno)
   let reply: string
   try {
     reply = (await iterar(sesion, deps, turno)) ?? (await cerrarPorTope(sesion, deps, turno))

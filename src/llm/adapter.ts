@@ -1,5 +1,6 @@
 // Interfaz neutra entre el ciclo del agente y cualquier proveedor de LLM (PRD 6.1).
 // El ciclo solo conoce estos tipos; cambiar de proveedor no lo toca.
+import type { ZodTypeAny } from "zod"
 
 export type JsonSchema = { [clave: string]: unknown }
 
@@ -15,7 +16,8 @@ export type Mensaje =
   | { rol: "modelo"; texto: string; llamadas: LlamadaHerramienta[]; nativo?: unknown }
   | { rol: "herramienta"; resultados: ResultadoHerramienta[] }
 
-export type DefinicionHerramienta = { nombre: string; descripcion: string; parametros: JsonSchema }
+/** El esquema va en zod: cada adaptador lo convierte al dialecto de JSON Schema de su proveedor. */
+export type DefinicionHerramienta = { nombre: string; descripcion: string; esquema: ZodTypeAny }
 
 export type RespuestaLlm = {
   texto: string

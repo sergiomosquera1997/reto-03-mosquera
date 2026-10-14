@@ -1,7 +1,6 @@
 // Registro de herramientas expuestas al modelo como <archivo>_<export> (PRD 6.2).
 import { z } from "zod"
-import { zodToJsonSchema } from "zod-to-json-schema"
-import type { DefinicionHerramienta, JsonSchema } from "../llm/adapter.ts"
+import type { DefinicionHerramienta } from "../llm/adapter.ts"
 import { fallo } from "../lib/resultado.ts"
 import type { Ctx } from "../schemas.ts"
 import * as oc from "../tools/oc.ts"
@@ -20,14 +19,13 @@ export type HerramientaRegistrada = {
 
 function registrar<S extends z.ZodRawShape>(nombre: string, h: Herramienta<S>): [string, HerramientaRegistrada] {
   const esquema = z.object(h.args)
-  const parametros = zodToJsonSchema(esquema, { target: "openApi3", $refStrategy: "none" }) as JsonSchema
   const ejecutar = async (args: unknown, ctx: Ctx): Promise<string> => {
     const r = esquema.safeParse(args)
     if (r.success) return h.execute(r.data, ctx)
     const detalle = r.error.issues.map((i) => `${i.path.join(".") || "(raíz)"}: ${i.message}`).join("; ")
     return fallo(`Argumentos inválidos para ${nombre}: ${detalle}`)
   }
-  return [nombre, { definicion: { nombre, descripcion: h.description, parametros }, ejecutar }]
+  return [nombre, { definicion: { nombre, descripcion: h.description, esquema }, ejecutar }]
 }
 
 export const HERRAMIENTAS: ReadonlyMap<string, HerramientaRegistrada> = new Map([

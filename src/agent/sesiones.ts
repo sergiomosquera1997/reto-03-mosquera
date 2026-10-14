@@ -38,7 +38,7 @@ export class AlmacenSesiones {
       ocupada: false,
       pendientes: new Map(),
       mensajesUsuario: 0,
-      ultimaIntencion: "otro",
+      ultimaDecision: { intencion: "otro", caso: null },
     }
     this.sesiones.set(id, nueva)
     return nueva

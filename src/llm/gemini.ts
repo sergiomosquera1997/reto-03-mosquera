@@ -2,7 +2,7 @@
 import { setTimeout as esperar } from "node:timers/promises"
 import { ApiError, GoogleGenAI, type Content, type GenerateContentResponse, type Part } from "@google/genai"
 import { ErrorLlm, type DefinicionHerramienta, type LlmAdapter, type Mensaje, type RespuestaLlm } from "./adapter.ts"
-import { limpiarParaGemini } from "./esquema.ts"
+import { esquemaGemini } from "./esquema.ts"
 
 const TIMEOUT_MS = 60_000
 const REINTENTOS = 3
@@ -95,7 +95,7 @@ export class GeminiAdapter implements LlmAdapter {
     const functionDeclarations = herramientas.map((h) => ({
       name: h.nombre,
       description: h.descripcion,
-      parameters: limpiarParaGemini(h.parametros),
+      parameters: esquemaGemini(h.esquema),
     }))
     return this.cliente.models.generateContent({
       model: this.modelo,

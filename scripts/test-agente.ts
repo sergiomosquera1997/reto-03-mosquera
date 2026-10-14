@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import { rm } from "node:fs/promises"
 import { join } from "node:path"
-import { clasificarMensaje } from "../src/agent/confirmacion.ts"
+import { autorizarCreacion, clasificarMensaje, type EstadoConfirmacion } from "../src/agent/confirmacion.ts"
 import { procesarTurno, type Dependencias } from "../src/agent/loop.ts"
 import { AlmacenSesiones } from "../src/agent/sesiones.ts"
 import { ErrorLlm, type LlmAdapter } from "../src/llm/adapter.ts"
@@ -30,11 +30,25 @@ function nombres(r: { toolCalls: Array<{ nombre: string; ok: boolean }> }): stri
 await rm(join(directory, "out"), { recursive: true, force: true })
 
 await prueba("clasificación de mensajes", () => {
-  for (const t of ["confirmo", "Confirmo.", "¡Sí!", "si", "SÍ, CONFIRMO", "adelante", "procede"]) assert.equal(clasificarMensaje(t), "confirmar", t)
-  for (const t of ["No", "cancela", "no, cancelar"]) assert.equal(clasificarMensaje(t), "cancelar", t)
-  for (const t of ["sí pero cambia el IVA", "ok, dale", "", "procesa sol-001"]) assert.equal(clasificarMensaje(t), "otro", t)
-  assert.equal(clasificarMensaje("cualquier cosa", true), "confirmar")
-  assert.equal(clasificarMensaje("sí", false), "cancelar")
+  const intencion = (t: string) => clasificarMensaje(t).intencion
+  for (const t of ["confirmo", "Confirmo.", "¡Sí!", "si", "SÍ, CONFIRMO", "adelante", "procede"]) assert.equal(intencion(t), "confirmar", t)
+  for (const t of ["No", "cancela", "no, cancelar"]) assert.equal(intencion(t), "cancelar", t)
+  for (const t of ["sí pero cambia el IVA", "ok, dale", "", "procesa sol-001", "sol-004", "confirmo sol-004 y sol-005"]) assert.equal(intencion(t), "otro", t)
+  assert.deepEqual(clasificarMensaje("Confirmo sol-004."), { intencion: "confirmar", caso: "sol-004" })
+  assert.deepEqual(clasificarMensaje("no, cancela sol-006"), { intencion: "cancelar", caso: "sol-006" })
+  assert.deepEqual(clasificarMensaje("cualquier cosa", { caso: "sol-005", valor: true }), { intencion: "confirmar", caso: "sol-005" })
+  assert.deepEqual(clasificarMensaje("sí", { caso: "sol-005", valor: false }), { intencion: "cancelar", caso: "sol-005" })
+})
+
+await prueba("autorizarCreacion: la confirmación solo habilita el caso confirmado", () => {
+  const pendiente = (caso: string) => ({ caso, confirmaciones: [], mensajeUsuario: 1 })
+  const pendientes = new Map([["sol-005", pendiente("sol-005")], ["sol-006", pendiente("sol-006")]])
+  const conCaso: EstadoConfirmacion = { pendientes, mensajesUsuario: 2, ultimaDecision: { intencion: "confirmar", caso: "sol-006" } }
+  assert.equal(autorizarCreacion(conCaso, "sol-006", true), null)
+  assert.match(autorizarCreacion(conCaso, "sol-005", true) ?? "", /confirmó sol-006, no sol-005/)
+  const sinCaso: EstadoConfirmacion = { ...conCaso, ultimaDecision: { intencion: "confirmar", caso: null } }
+  assert.match(autorizarCreacion(sinCaso, "sol-006", true) ?? "", /varias OC pendientes/)
+  assert.equal(autorizarCreacion(sinCaso, "sol-006", false), null)
 })
 
 const sesion = new AlmacenSesiones().obtener("sol-004")
@@ -63,26 +77,46 @@ await prueba("sol-004 turno 3: 'confirmo' crea la OC", async () => {
   assert.equal(r.needsConfirmation, false)
 })
 
-await prueba("botón Cancelar descarta el pendiente sin llamar al modelo", async () => {
+await prueba("botón Cancelar de un caso descarta solo ese pendiente, sin llamar al modelo", async () => {
   const s = new AlmacenSesiones().obtener("cancelar")
   await procesarTurno(s, { message: "procesa sol-006" }, { ...base, llm: new MockAdapter() })
   assert.equal(s.pendientes.has("sol-006"), true)
-  const r = await procesarTurno(s, { confirm: false }, base)
+  const r = await procesarTurno(s, { confirm: { caso: "sol-006", valor: false } }, base)
   assert.deepEqual(r.toolCalls, [])
   assert.match(r.reply, /Cancelado\. No se creó la OC de sol-006/)
   assert.equal(r.needsConfirmation, false)
 })
 
-await prueba("botón Confirmar crea sol-006 (pendientes por caso en la misma sesión)", async () => {
+await prueba("dos pendientes: 'confirmo' sin caso pregunta cuál; con caso o botón crea solo ese", async () => {
   const s = new AlmacenSesiones().obtener("dos-casos")
-  const llm = new MockAdapter()
-  await procesarTurno(s, { message: "procesa sol-005" }, { ...base, llm })
-  await procesarTurno(s, { message: "procesa sol-006" }, { ...base, llm })
+  const deps = { ...base, llm: new MockAdapter() }
+  await procesarTurno(s, { message: "procesa sol-005" }, deps)
+  await procesarTurno(s, { message: "procesa sol-006" }, deps)
   assert.deepEqual([...s.pendientes.keys()].sort(), ["sol-005", "sol-006"])
-  const r = await procesarTurno(s, { confirm: true }, { ...base, llm })
-  assert.deepEqual(nombres(r), ["oc_crear:ok"])
-  assert.match(r.reply, /creada para sol-006/)
-  assert.deepEqual([...s.pendientes.keys()], ["sol-005"])
+
+  const ambiguo = await procesarTurno(s, { message: "confirmo" }, deps)
+  assert.deepEqual(ambiguo.toolCalls, [])
+  assert.match(ambiguo.reply, /varias OC pendientes.*sol-005.*sol-006.*¿Cuál confirmas\?/s)
+  assert.equal(ambiguo.needsConfirmation, true)
+
+  const texto = await procesarTurno(s, { message: "Confirmo sol-005" }, deps)
+  assert.deepEqual(nombres(texto), ["oc_crear:ok"])
+  assert.match(texto.reply, /creada para sol-005/)
+  assert.deepEqual([...s.pendientes.keys()], ["sol-006"])
+
+  const boton = await procesarTurno(s, { confirm: { caso: "sol-006", valor: true } }, deps)
+  assert.deepEqual(nombres(boton), ["oc_crear:ok"])
+  assert.match(boton.reply, /creada para sol-006/)
+  assert.equal(boton.needsConfirmation, false)
+})
+
+await prueba("botón Confirmar de un caso sin pendiente: el servidor lo indica sin crear nada", async () => {
+  const s = new AlmacenSesiones().obtener("sin-pendiente")
+  await procesarTurno(s, { message: "procesa sol-006" }, { ...base, llm: new MockAdapter() })
+  const r = await procesarTurno(s, { confirm: { caso: "sol-004", valor: true } }, base)
+  assert.deepEqual(r.toolCalls, [])
+  assert.match(r.reply, /No hay una OC pendiente de confirmación para sol-004/)
+  assert.deepEqual([...s.pendientes.keys()], ["sol-006"])
 })
 
 await prueba("caso bloqueado: registra el intento sin payload", async () => {

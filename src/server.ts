@@ -35,7 +35,9 @@ const ChatSchema = z
   .object({
     sessionId: z.string().regex(/^[\w-]{1,100}$/, "sessionId: solo letras, dígitos, _ y -, máx. 100"),
     message: z.string().max(4000).optional(),
-    confirm: z.boolean().optional(),
+    confirm: z
+      .object({ caso: z.string().regex(/^[a-z0-9-]{1,40}$/, "confirm.caso inválido"), valor: z.boolean() })
+      .optional(),
   })
   .refine((b) => (b.message?.trim() ?? "") !== "" || b.confirm !== undefined, "Envía message o confirm.")
 

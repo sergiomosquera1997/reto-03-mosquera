@@ -112,9 +112,11 @@ export class MockAdapter implements LlmAdapter {
   }
 
   private iniciarTurno(mensajes: Mensaje[], lista: Evento[]): RespuestaLlm {
-    const caso = /sol-\d{3}/i.exec(ultimoUsuario(mensajes))?.[0]?.toLowerCase()
-    if (caso) return herramientas(llamada("oc_leer_paquete", { caso }))
-    const pendiente = casoPendiente(lista)
+    const textoUsuario = ultimoUsuario(mensajes)
+    const caso = /sol-\d{3}/i.exec(textoUsuario)?.[0]?.toLowerCase()
+    const confirma = /^\s*(confirmo|confirmar|s[ií]|procede|adelante)\b/i.test(textoUsuario)
+    if (caso && !confirma) return herramientas(llamada("oc_leer_paquete", { caso }))
+    const pendiente = confirma && caso ? caso : casoPendiente(lista)
     const orden = pendiente ? campo(ultimo(lista, "oc_construir_payload", pendiente)?.data, "orden") : undefined
     if (pendiente && orden) return herramientas(llamada("oc_crear", { caso: pendiente, payload: orden, confirmado: true }))
     return texto("Indica qué solicitud procesar, por ejemplo: procesa la solicitud sol-001.")

@@ -1,5 +1,18 @@
-// Limpieza de JSON Schema (target openApi3) al subconjunto que acepta el function calling de Gemini.
+// Conversión de esquemas zod al JSON Schema de cada proveedor.
+import type { ZodTypeAny } from "zod"
+import { zodToJsonSchema } from "zod-to-json-schema"
 import type { JsonSchema } from "./adapter.ts"
+
+/** JSON Schema estándar (draft-07) sin $schema: lo que espera input_schema de Anthropic. */
+export function esquemaJson(esquema: ZodTypeAny): JsonSchema {
+  const { $schema: _descartado, ...resto } = zodToJsonSchema(esquema, { target: "jsonSchema7", $refStrategy: "none" }) as JsonSchema
+  return resto
+}
+
+/** Dialecto OpenAPI 3 limpio para el function calling de Gemini. */
+export function esquemaGemini(esquema: ZodTypeAny): JsonSchema {
+  return limpiarParaGemini(zodToJsonSchema(esquema, { target: "openApi3", $refStrategy: "none" }) as JsonSchema)
+}
 
 const CLAVES_PERMITIDAS = new Set([
   "type", "description", "enum", "format", "nullable", "properties", "required", "items",
